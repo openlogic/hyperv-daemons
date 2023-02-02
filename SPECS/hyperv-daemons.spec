@@ -13,7 +13,7 @@
 
 Name:     hyperv-daemons
 Version:  0
-Release:  0.32%{?snapver}_ol001%{?dist}
+Release:  0.32%{?snapver}_ol002%{?dist}
 Summary:  Hyper-V daemons suite
 
 Group:    System Environment/Daemons
@@ -74,6 +74,7 @@ Requires:       hypervkvpd = %{version}-%{release}
 Requires:       hypervvssd = %{version}-%{release}
 Requires:       hypervfcopyd = %{version}-%{release}
 BuildRequires:  gcc
+BuildRequires:  python3-devel
 
 %description
 Suite of daemons that are needed when Linux guest
@@ -293,6 +294,12 @@ fi
 %{_sbindir}/vmbus_testing
 
 %changelog
+* Thu Feb  2 2023 Rich Alloway <ralloway@perforce .com> - 0-0.32.20180415git_ol002.el7
+- Added python3-devel as an explicit BuildRequires in order to populate "__python3" rpm macro so the sed command during the Tools %install phase works
+
+* Wed Jun 22 2022 Rich Alloway <ralloway@perforce .com> - 0-0.32.20180415git_ol001.el7
+- Built hyperv-daemons from EL8 for EL7 (aarch64) at the request of Microsoft
+
 * Tue Mar 22 2022 Jon Maloy <jmaloy@redhat.com> - 0-0.32.20180415git.el8
 - hpvd-hv_set_ifconfig.sh-Use-nmcli-commands.patch [bz#2056566]
 - hpvd-Use-filename-for-connection-profile.patch [bz#2056566]
