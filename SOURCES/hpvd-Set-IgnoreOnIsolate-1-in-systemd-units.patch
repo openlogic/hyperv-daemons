@@ -1,0 +1,74 @@
+From 2b218c6e29ff031862c0976deb9810dfb2d79ab2 Mon Sep 17 00:00:00 2001
+From: Vitaly Kuznetsov <vkuznets@redhat.com>
+Date: Thu, 14 Nov 2019 12:21:46 +0100
+Subject: [PATCH] Set IgnoreOnIsolate=1 in systemd units
+
+RH-Author: Vitaly Kuznetsov <vkuznets@redhat.com>
+Message-id: <20191114122146.17009-1-vkuznets@redhat.com>
+Patchwork-id: 92251
+O-Subject: [RHEL8.2 hyperv-daemons PATCH] Set IgnoreOnIsolate=1 in systemd units
+Bugzilla: 1769920
+RH-Acked-by: Mohammed Gamal <mgamal@redhat.com>
+RH-Acked-by: Eduardo Otubo <otubo@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1769920
+Branch: rhel-8.2.0
+Brew: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=24699501
+Upstream: RHEL-only (upstream doesn't ship systemd units)
+
+Hyper-V daemons' units are udev activated: when the appropriate device
+appears systemd unit is started and normal targets (e.g. multi-user.target)
+don't depend on these units. With systemd it is possible to try to isolate
+the target (somewhat similar to switching runlevel), this is supposed to
+shut everything which the target doesn't depend on (like units started
+manually) off. It seems that the general users' expectation is that
+hyperv-daemons units survive the procedure.
+
+Signed-off-by: Vitaly Kuznetsov <vkuznets@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hypervfcopyd.service | 1 +
+ hypervkvpd.service   | 1 +
+ hypervvssd.service   | 1 +
+ 3 files changed, 3 insertions(+)
+
+diff --git a/hypervfcopyd.service b/hypervfcopyd.service
+index fa4a0a3..dd14a97 100644
+--- a/hypervfcopyd.service
++++ b/hypervfcopyd.service
+@@ -1,6 +1,7 @@
+ [Unit]
+ Description=Hyper-V FCOPY daemon
+ BindsTo=sys-devices-virtual-misc-vmbus\x21hv_fcopy.device
++IgnoreOnIsolate=1
+ 
+ [Service]
+ ExecStart=/usr/sbin/hypervfcopyd -n
+diff --git a/hypervkvpd.service b/hypervkvpd.service
+index d8bfdf3..36ee11c 100644
+--- a/hypervkvpd.service
++++ b/hypervkvpd.service
+@@ -2,6 +2,7 @@
+ Description=Hyper-V KVP daemon
+ BindsTo=sys-devices-virtual-misc-vmbus\x21hv_kvp.device
+ After=network.target
++IgnoreOnIsolate=1
+ 
+ [Service]
+ Type=simple
+diff --git a/hypervvssd.service b/hypervvssd.service
+index 9751cb3..1e5ff43 100644
+--- a/hypervvssd.service
++++ b/hypervvssd.service
+@@ -1,6 +1,7 @@
+ [Unit]
+ Description=Hyper-V VSS daemon
+ BindsTo=sys-devices-virtual-misc-vmbus\x21hv_vss.device
++IgnoreOnIsolate=1
+ 
+ [Service]
+ ExecStart=/usr/sbin/hypervvssd -n
+-- 
+1.8.3.1
+

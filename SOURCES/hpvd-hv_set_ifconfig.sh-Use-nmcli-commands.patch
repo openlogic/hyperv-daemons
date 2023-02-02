@@ -1,0 +1,41 @@
+From 2db75ec41c2e346af992f9c00f2e90ed9fec694b Mon Sep 17 00:00:00 2001
+From: Till Maas <timaas@redhat.com>
+Date: Mon, 13 Dec 2021 16:08:42 +0000
+Subject: [PATCH 1/2] hv_set_ifconfig.sh: Use nmcli commands
+
+RH-Author: Mohamed Gamal Morsy <mmorsy@redhat.com>
+RH-MergeRequest: 2: hv_set_ifconfig.sh: Use nmcli commands
+RH-Commit: [1/2] c045f4c849a7d8841c8ad4b6e4ba63abfb946187
+RH-Bugzilla: 2056566
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Vitaly Kuznetsov <vkuznets@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=2056566
+
+Instead of using deprecated ifup/ifdown commands, use nmcli commands.
+Taking the connection down is not necessary with NM, so don't do it.
+
+Signed-off-by: Till Maas <tmaas@redhat.com>
+Signed-off-by: Mohammed Gamal <mgamal@redhat.com>
+---
+ hv_set_ifconfig.sh | 7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/hv_set_ifconfig.sh b/hv_set_ifconfig.sh
+index 3dd064c..5a64efe 100644
+--- a/hv_set_ifconfig.sh
++++ b/hv_set_ifconfig.sh
+@@ -57,8 +57,5 @@ echo "ONBOOT=yes" >> $1
+ 
+ cp $1 /etc/sysconfig/network-scripts/
+ 
+-
+-interface=$(echo $1 | awk -F - '{ print $2 }')
+-
+-/sbin/ifdown $interface 2>/dev/null
+-/sbin/ifup $interface 2>/dev/null
++nmcli connection load "/etc/sysconfig/network-scripts/$1"
++nmcli connection up filename "/etc/sysconfig/network-scripts/$1"
+-- 
+2.27.0
+

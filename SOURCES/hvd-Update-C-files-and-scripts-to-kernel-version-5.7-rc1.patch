@@ -1,0 +1,685 @@
+From b0a20fac0e74b0b3eecc20ffe74006e7877da352 Mon Sep 17 00:00:00 2001
+From: Mohammed Gamal <mgamal@redhat.com>
+Date: Wed, 15 Apr 2020 12:00:14 +0200
+Subject: [PATCH 1/2] Update C files and scripts to kernel version 5.7-rc1
+
+RH-Author: Mohammed Gamal <mgamal@redhat.com>
+Message-id: <20200414183955.194006-2-mgamal@redhat.com>
+Patchwork-id: 94689
+O-Subject: [RHEL8.3 virt hyperv-daemons PATCH v5 1/2] Update C files and scripts to kernel version 5.7-rc1
+Bugzilla: 1816750
+RH-Acked-by: Vitaly Kuznetsov <vkuznets@redhat.com>
+RH-Acked-by: Cathy Avery <cavery@redhat.com>
+
+Signed-off-by: Mohammed Gamal <mgamal@redhat.com>
+---
+ hv_fcopy_daemon.c   |  38 ++++++++++++--
+ hv_get_dhcp_info.sh |   2 +-
+ hv_kvp_daemon.c     |  63 ++++++++++++++---------
+ hv_set_ifconfig.sh  |   2 +-
+ hv_vss_daemon.c     | 118 ++++++++++++++++++++++++++++++++++++++------
+ lsvmbus             |  75 +++++++++++++++-------------
+ 6 files changed, 220 insertions(+), 78 deletions(-)
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hv_fcopy_daemon.c   |  38 ++++++++++++++---
+ hv_get_dhcp_info.sh |   2 +-
+ hv_kvp_daemon.c     |  63 ++++++++++++++++++----------
+ hv_set_ifconfig.sh  |   2 +-
+ hv_vss_daemon.c     | 118 +++++++++++++++++++++++++++++++++++++++++++++-------
+ lsvmbus             |  75 ++++++++++++++++++---------------
+ 6 files changed, 220 insertions(+), 78 deletions(-)
+
+diff --git a/hv_fcopy_daemon.c b/hv_fcopy_daemon.c
+index d78aed8..f40ddaf 100644
+--- a/hv_fcopy_daemon.c
++++ b/hv_fcopy_daemon.c
+@@ -89,6 +89,8 @@ static int hv_start_fcopy(struct hv_start_fcopy *smsg)
+ 
+ 	error = 0;
+ done:
++	if (error)
++		target_fname[0] = '\0';
+ 	return error;
+ }
+ 
+@@ -117,15 +119,29 @@ static int hv_copy_data(struct hv_do_fcopy *cpmsg)
+ 	return ret;
+ }
+ 
++/*
++ * Reset target_fname to "" in the two below functions for hibernation: if
++ * the fcopy operation is aborted by hibernation, the daemon should remove the
++ * partially-copied file; to achieve this, the hv_utils driver always fakes a
++ * CANCEL_FCOPY message upon suspend, and later when the VM resumes back,
++ * the daemon calls hv_copy_cancel() to remove the file; if a file is copied
++ * successfully before suspend, hv_copy_finished() must reset target_fname to
++ * avoid that the file can be incorrectly removed upon resume, since the faked
++ * CANCEL_FCOPY message is spurious in this case.
++ */
+ static int hv_copy_finished(void)
+ {
+ 	close(target_fd);
++	target_fname[0] = '\0';
+ 	return 0;
+ }
+ static int hv_copy_cancel(void)
+ {
+ 	close(target_fd);
+-	unlink(target_fname);
++	if (strlen(target_fname) > 0) {
++		unlink(target_fname);
++		target_fname[0] = '\0';
++	}
+ 	return 0;
+ 
+ }
+@@ -140,7 +156,7 @@ void print_usage(char *argv[])
+ 
+ int main(int argc, char *argv[])
+ {
+-	int fcopy_fd;
++	int fcopy_fd = -1;
+ 	int error;
+ 	int daemonize = 1, long_index = 0, opt;
+ 	int version = FCOPY_CURRENT_VERSION;
+@@ -150,7 +166,7 @@ int main(int argc, char *argv[])
+ 		struct hv_do_fcopy copy;
+ 		__u32 kernel_modver;
+ 	} buffer = { };
+-	int in_handshake = 1;
++	int in_handshake;
+ 
+ 	static struct option long_options[] = {
+ 		{"help",	no_argument,	   0,  'h' },
+@@ -179,6 +195,12 @@ int main(int argc, char *argv[])
+ 	openlog("HV_FCOPY", 0, LOG_USER);
+ 	syslog(LOG_INFO, "starting; pid is:%d", getpid());
+ 
++reopen_fcopy_fd:
++	if (fcopy_fd != -1)
++		close(fcopy_fd);
++	/* Remove any possible partially-copied file on error */
++	hv_copy_cancel();
++	in_handshake = 1;
+ 	fcopy_fd = open("/dev/vmbus/hv_fcopy", O_RDWR);
+ 
+ 	if (fcopy_fd < 0) {
+@@ -205,7 +227,7 @@ int main(int argc, char *argv[])
+ 		len = pread(fcopy_fd, &buffer, sizeof(buffer), 0);
+ 		if (len < 0) {
+ 			syslog(LOG_ERR, "pread failed: %s", strerror(errno));
+-			exit(EXIT_FAILURE);
++			goto reopen_fcopy_fd;
+ 		}
+ 
+ 		if (in_handshake) {
+@@ -234,14 +256,20 @@ int main(int argc, char *argv[])
+ 			break;
+ 
+ 		default:
++			error = HV_E_FAIL;
+ 			syslog(LOG_ERR, "Unknown operation: %d",
+ 				buffer.hdr.operation);
+ 
+ 		}
+ 
++		/*
++		 * pwrite() may return an error due to the faked CANCEL_FCOPY
++		 * message upon hibernation. Ignore the error by resetting the
++		 * dev file, i.e. closing and re-opening it.
++		 */
+ 		if (pwrite(fcopy_fd, &error, sizeof(int), 0) != sizeof(int)) {
+ 			syslog(LOG_ERR, "pwrite failed: %s", strerror(errno));
+-			exit(EXIT_FAILURE);
++			goto reopen_fcopy_fd;
+ 		}
+ 	}
+ }
+diff --git a/hv_get_dhcp_info.sh b/hv_get_dhcp_info.sh
+index c38686c..2f2a3c7 100644
+--- a/hv_get_dhcp_info.sh
++++ b/hv_get_dhcp_info.sh
+@@ -13,7 +13,7 @@
+ #	the script prints the string "Disabled" to stdout.
+ #
+ # Each Distro is expected to implement this script in a distro specific
+-# fashion. For instance on Distros that ship with Network Manager enabled,
++# fashion. For instance, on Distros that ship with Network Manager enabled,
+ # this script can be based on the Network Manager APIs for retrieving DHCP
+ # information.
+ 
+diff --git a/hv_kvp_daemon.c b/hv_kvp_daemon.c
+index dbf6e8b..ee9c1bb 100644
+--- a/hv_kvp_daemon.c
++++ b/hv_kvp_daemon.c
+@@ -76,7 +76,7 @@ enum {
+ 	DNS
+ };
+ 
+-static int in_hand_shake = 1;
++static int in_hand_shake;
+ 
+ static char *os_name = "";
+ static char *os_major = "";
+@@ -286,7 +286,7 @@ static int kvp_key_delete(int pool, const __u8 *key, int key_size)
+ 		 * Found a match; just move the remaining
+ 		 * entries up.
+ 		 */
+-		if (i == num_records) {
++		if (i == (num_records - 1)) {
+ 			kvp_file_info[pool].num_records--;
+ 			kvp_update_file(pool);
+ 			return 0;
+@@ -700,7 +700,7 @@ static void kvp_get_ipconfig_info(char *if_name,
+ 
+ 
+ 	/*
+-	 * Gather the DNS  state.
++	 * Gather the DNS state.
+ 	 * Since there is no standard way to get this information
+ 	 * across various distributions of interest; we just invoke
+ 	 * an external script that needs to be ported across distros
+@@ -809,7 +809,7 @@ kvp_get_ip_info(int family, char *if_name, int op,
+ 	int sn_offset = 0;
+ 	int error = 0;
+ 	char *buffer;
+-	struct hv_kvp_ipaddr_value *ip_buffer;
++	struct hv_kvp_ipaddr_value *ip_buffer = NULL;
+ 	char cidr_mask[5]; /* /xyz */
+ 	int weight;
+ 	int i;
+@@ -1051,7 +1051,7 @@ static int parse_ip_val_buffer(char *in_buf, int *offset,
+ 	char *start;
+ 
+ 	/*
+-	 * in_buf has sequence of characters that are seperated by
++	 * in_buf has sequence of characters that are separated by
+ 	 * the character ';'. The last sequence does not have the
+ 	 * terminating ";" character.
+ 	 */
+@@ -1178,6 +1178,7 @@ static int kvp_set_ip_info(char *if_name, struct hv_kvp_ipaddr_value *new_val)
+ 	FILE *file;
+ 	char cmd[PATH_MAX];
+ 	char *mac_addr;
++	int str_len;
+ 
+ 	/*
+ 	 * Set the configuration for the specified interface with
+@@ -1301,8 +1302,18 @@ static int kvp_set_ip_info(char *if_name, struct hv_kvp_ipaddr_value *new_val)
+ 	 * invoke the external script to do its magic.
+ 	 */
+ 
+-	snprintf(cmd, sizeof(cmd), KVP_SCRIPTS_PATH "%s %s",
+-		 "hv_set_ifconfig", if_file);
++	str_len = snprintf(cmd, sizeof(cmd), KVP_SCRIPTS_PATH "%s %s",
++			   "hv_set_ifconfig", if_file);
++	/*
++	 * This is a little overcautious, but it's necessary to suppress some
++	 * false warnings from gcc 8.0.1.
++	 */
++	if (str_len <= 0 || (unsigned int)str_len >= sizeof(cmd)) {
++		syslog(LOG_ERR, "Cmd '%s' (len=%d) may be too long",
++		       cmd, str_len);
++		return HV_E_FAIL;
++	}
++
+ 	if (system(cmd)) {
+ 		syslog(LOG_ERR, "Failed to execute cmd '%s'; error: %d %s",
+ 				cmd, errno, strerror(errno));
+@@ -1349,7 +1360,7 @@ void print_usage(char *argv[])
+ 
+ int main(int argc, char *argv[])
+ {
+-	int kvp_fd, len;
++	int kvp_fd = -1, len;
+ 	int error;
+ 	struct pollfd pfd;
+ 	char    *p;
+@@ -1375,6 +1386,8 @@ int main(int argc, char *argv[])
+ 			daemonize = 0;
+ 			break;
+ 		case 'h':
++			print_usage(argv);
++			exit(0);
+ 		default:
+ 			print_usage(argv);
+ 			exit(EXIT_FAILURE);
+@@ -1387,14 +1400,6 @@ int main(int argc, char *argv[])
+ 	openlog("KVP", 0, LOG_USER);
+ 	syslog(LOG_INFO, "KVP starting; pid is:%d", getpid());
+ 
+-	kvp_fd = open("/dev/vmbus/hv_kvp", O_RDWR | O_CLOEXEC);
+-
+-	if (kvp_fd < 0) {
+-		syslog(LOG_ERR, "open /dev/vmbus/hv_kvp failed; error: %d %s",
+-			errno, strerror(errno));
+-		exit(EXIT_FAILURE);
+-	}
+-
+ 	/*
+ 	 * Retrieve OS release information.
+ 	 */
+@@ -1410,6 +1415,18 @@ int main(int argc, char *argv[])
+ 		exit(EXIT_FAILURE);
+ 	}
+ 
++reopen_kvp_fd:
++	if (kvp_fd != -1)
++		close(kvp_fd);
++	in_hand_shake = 1;
++	kvp_fd = open("/dev/vmbus/hv_kvp", O_RDWR | O_CLOEXEC);
++
++	if (kvp_fd < 0) {
++		syslog(LOG_ERR, "open /dev/vmbus/hv_kvp failed; error: %d %s",
++		       errno, strerror(errno));
++		exit(EXIT_FAILURE);
++	}
++
+ 	/*
+ 	 * Register ourselves with the kernel.
+ 	 */
+@@ -1443,9 +1460,7 @@ int main(int argc, char *argv[])
+ 		if (len != sizeof(struct hv_kvp_msg)) {
+ 			syslog(LOG_ERR, "read failed; error:%d %s",
+ 			       errno, strerror(errno));
+-
+-			close(kvp_fd);
+-			return EXIT_FAILURE;
++			goto reopen_kvp_fd;
+ 		}
+ 
+ 		/*
+@@ -1479,7 +1494,7 @@ int main(int argc, char *argv[])
+ 		case KVP_OP_GET_IP_INFO:
+ 			kvp_ip_val = &hv_msg->body.kvp_ip_val;
+ 
+-			error =  kvp_mac_to_ip(kvp_ip_val);
++			error = kvp_mac_to_ip(kvp_ip_val);
+ 
+ 			if (error)
+ 				hv_msg->error = error;
+@@ -1604,13 +1619,17 @@ int main(int argc, char *argv[])
+ 			break;
+ 		}
+ 
+-		/* Send the value back to the kernel. */
++		/*
++		 * Send the value back to the kernel. Note: the write() may
++		 * return an error due to hibernation; we can ignore the error
++		 * by resetting the dev file, i.e. closing and re-opening it.
++		 */
+ kvp_done:
+ 		len = write(kvp_fd, hv_msg, sizeof(struct hv_kvp_msg));
+ 		if (len != sizeof(struct hv_kvp_msg)) {
+ 			syslog(LOG_ERR, "write failed; error: %d %s", errno,
+ 			       strerror(errno));
+-			exit(EXIT_FAILURE);
++			goto reopen_kvp_fd;
+ 		}
+ 	}
+ 
+diff --git a/hv_set_ifconfig.sh b/hv_set_ifconfig.sh
+index 18b27cc..3dd064c 100644
+--- a/hv_set_ifconfig.sh
++++ b/hv_set_ifconfig.sh
+@@ -12,7 +12,7 @@
+ # be used to configure the interface.
+ #
+ # Each Distro is expected to implement this script in a distro specific
+-# fashion. For instance on Distros that ship with Network Manager enabled,
++# fashion. For instance, on Distros that ship with Network Manager enabled,
+ # this script can be based on the Network Manager APIs for configuring the
+ # interface.
+ #
+diff --git a/hv_vss_daemon.c b/hv_vss_daemon.c
+index 34031a2..8fe0a5c 100644
+--- a/hv_vss_daemon.c
++++ b/hv_vss_daemon.c
+@@ -36,6 +36,10 @@
+ #include <linux/hyperv.h>
+ #include <syslog.h>
+ #include <getopt.h>
++#include <stdbool.h>
++#include <dirent.h>
++
++static bool fs_frozen;
+ 
+ /* Don't use syslog() in the function since that can cause write to disk */
+ static int vss_do_freeze(char *dir, unsigned int cmd)
+@@ -51,7 +55,7 @@ static int vss_do_freeze(char *dir, unsigned int cmd)
+ 	 * If a partition is mounted more than once, only the first
+ 	 * FREEZE/THAW can succeed and the later ones will get
+ 	 * EBUSY/EINVAL respectively: there could be 2 cases:
+-	 * 1) a user may mount the same partition to differnt directories
++	 * 1) a user may mount the same partition to different directories
+ 	 *  by mistake or on purpose;
+ 	 * 2) The subvolume of btrfs appears to have the same partition
+ 	 * mounted more than once.
+@@ -68,6 +72,55 @@ static int vss_do_freeze(char *dir, unsigned int cmd)
+ 	return !!ret;
+ }
+ 
++static bool is_dev_loop(const char *blkname)
++{
++	char *buffer;
++	DIR *dir;
++	struct dirent *entry;
++	bool ret = false;
++
++	buffer = malloc(PATH_MAX);
++	if (!buffer) {
++		syslog(LOG_ERR, "Can't allocate memory!");
++		exit(1);
++	}
++
++	snprintf(buffer, PATH_MAX, "%s/loop", blkname);
++	if (!access(buffer, R_OK | X_OK)) {
++		ret = true;
++		goto free_buffer;
++	} else if (errno != ENOENT) {
++		syslog(LOG_ERR, "Can't access: %s; error:%d %s!",
++		       buffer, errno, strerror(errno));
++	}
++
++	snprintf(buffer, PATH_MAX, "%s/slaves", blkname);
++	dir = opendir(buffer);
++	if (!dir) {
++		if (errno != ENOENT)
++			syslog(LOG_ERR, "Can't opendir: %s; error:%d %s!",
++			       buffer, errno, strerror(errno));
++		goto free_buffer;
++	}
++
++	while ((entry = readdir(dir)) != NULL) {
++		if (strcmp(entry->d_name, ".") == 0 ||
++		    strcmp(entry->d_name, "..") == 0)
++			continue;
++
++		snprintf(buffer, PATH_MAX, "%s/slaves/%s", blkname,
++			 entry->d_name);
++		if (is_dev_loop(buffer)) {
++			ret = true;
++			break;
++		}
++	}
++	closedir(dir);
++free_buffer:
++	free(buffer);
++	return ret;
++}
++
+ static int vss_operate(int operation)
+ {
+ 	char match[] = "/dev/";
+@@ -75,6 +128,7 @@ static int vss_operate(int operation)
+ 	struct mntent *ent;
+ 	struct stat sb;
+ 	char errdir[1024] = {0};
++	char blkdir[23]; /* /sys/dev/block/XXX:XXX */
+ 	unsigned int cmd;
+ 	int error = 0, root_seen = 0, save_errno = 0;
+ 
+@@ -96,10 +150,15 @@ static int vss_operate(int operation)
+ 	while ((ent = getmntent(mounts))) {
+ 		if (strncmp(ent->mnt_fsname, match, strlen(match)))
+ 			continue;
+-		if (stat(ent->mnt_fsname, &sb) == -1)
+-			continue;
+-		if (S_ISBLK(sb.st_mode) && major(sb.st_rdev) == LOOP_MAJOR)
+-			continue;
++		if (stat(ent->mnt_fsname, &sb)) {
++			syslog(LOG_ERR, "Can't stat: %s; error:%d %s!",
++			       ent->mnt_fsname, errno, strerror(errno));
++		} else {
++			sprintf(blkdir, "/sys/dev/block/%d:%d",
++				major(sb.st_rdev), minor(sb.st_rdev));
++			if (is_dev_loop(blkdir))
++				continue;
++		}
+ 		if (hasmntopt(ent, MNTOPT_RO) != NULL)
+ 			continue;
+ 		if (strcmp(ent->mnt_type, "vfat") == 0)
+@@ -109,18 +168,27 @@ static int vss_operate(int operation)
+ 			continue;
+ 		}
+ 		error |= vss_do_freeze(ent->mnt_dir, cmd);
+-		if (error && operation == VSS_OP_FREEZE)
+-			goto err;
++		if (operation == VSS_OP_FREEZE) {
++			if (error)
++				goto err;
++			fs_frozen = true;
++		}
+ 	}
+ 
+ 	endmntent(mounts);
+ 
+ 	if (root_seen) {
+ 		error |= vss_do_freeze("/", cmd);
+-		if (error && operation == VSS_OP_FREEZE)
+-			goto err;
++		if (operation == VSS_OP_FREEZE) {
++			if (error)
++				goto err;
++			fs_frozen = true;
++		}
+ 	}
+ 
++	if (operation == VSS_OP_THAW && !error)
++		fs_frozen = false;
++
+ 	goto out;
+ err:
+ 	save_errno = errno;
+@@ -129,6 +197,7 @@ err:
+ 		endmntent(mounts);
+ 	}
+ 	vss_operate(VSS_OP_THAW);
++	fs_frozen = false;
+ 	/* Call syslog after we thaw all filesystems */
+ 	if (ent)
+ 		syslog(LOG_ERR, "FREEZE of %s failed; error:%d %s",
+@@ -150,13 +219,13 @@ void print_usage(char *argv[])
+ 
+ int main(int argc, char *argv[])
+ {
+-	int vss_fd, len;
++	int vss_fd = -1, len;
+ 	int error;
+ 	struct pollfd pfd;
+ 	int	op;
+ 	struct hv_vss_msg vss_msg[1];
+ 	int daemonize = 1, long_index = 0, opt;
+-	int in_handshake = 1;
++	int in_handshake;
+ 	__u32 kernel_modver;
+ 
+ 	static struct option long_options[] = {
+@@ -172,6 +241,8 @@ int main(int argc, char *argv[])
+ 			daemonize = 0;
+ 			break;
+ 		case 'h':
++			print_usage(argv);
++			exit(0);
+ 		default:
+ 			print_usage(argv);
+ 			exit(EXIT_FAILURE);
+@@ -184,6 +255,18 @@ int main(int argc, char *argv[])
+ 	openlog("Hyper-V VSS", 0, LOG_USER);
+ 	syslog(LOG_INFO, "VSS starting; pid is:%d", getpid());
+ 
++reopen_vss_fd:
++	if (vss_fd != -1)
++		close(vss_fd);
++	if (fs_frozen) {
++		if (vss_operate(VSS_OP_THAW) || fs_frozen) {
++			syslog(LOG_ERR, "failed to thaw file system: err=%d",
++			       errno);
++			exit(EXIT_FAILURE);
++		}
++	}
++
++	in_handshake = 1;
+ 	vss_fd = open("/dev/vmbus/hv_vss", O_RDWR);
+ 	if (vss_fd < 0) {
+ 		syslog(LOG_ERR, "open /dev/vmbus/hv_vss failed; error: %d %s",
+@@ -236,8 +319,7 @@ int main(int argc, char *argv[])
+ 		if (len != sizeof(struct hv_vss_msg)) {
+ 			syslog(LOG_ERR, "read failed; error:%d %s",
+ 			       errno, strerror(errno));
+-			close(vss_fd);
+-			return EXIT_FAILURE;
++			goto reopen_vss_fd;
+ 		}
+ 
+ 		op = vss_msg->vss_hdr.operation;
+@@ -264,14 +346,18 @@ int main(int argc, char *argv[])
+ 		default:
+ 			syslog(LOG_ERR, "Illegal op:%d\n", op);
+ 		}
++
++		/*
++		 * The write() may return an error due to the faked VSS_OP_THAW
++		 * message upon hibernation. Ignore the error by resetting the
++		 * dev file, i.e. closing and re-opening it.
++		 */
+ 		vss_msg->error = error;
+ 		len = write(vss_fd, vss_msg, sizeof(struct hv_vss_msg));
+ 		if (len != sizeof(struct hv_vss_msg)) {
+ 			syslog(LOG_ERR, "write failed; error: %d %s", errno,
+ 			       strerror(errno));
+-
+-			if (op == VSS_OP_FREEZE)
+-				vss_operate(VSS_OP_THAW);
++			goto reopen_vss_fd;
+ 		}
+ 	}
+ 
+diff --git a/lsvmbus b/lsvmbus
+index 55e7374..099f2c4 100644
+--- a/lsvmbus
++++ b/lsvmbus
+@@ -4,10 +4,10 @@
+ import os
+ from optparse import OptionParser
+ 
++help_msg = "print verbose messages. Try -vv, -vvv for  more verbose messages"
+ parser = OptionParser()
+-parser.add_option("-v", "--verbose", dest="verbose",
+-		   help="print verbose messages. Try -vv, -vvv for \
+-			more verbose messages", action="count")
++parser.add_option(
++	"-v", "--verbose", dest="verbose", help=help_msg, action="count")
+ 
+ (options, args) = parser.parse_args()
+ 
+@@ -21,27 +21,28 @@ if not os.path.isdir(vmbus_sys_path):
+ 	exit(-1)
+ 
+ vmbus_dev_dict = {
+-	'{0e0b6031-5213-4934-818b-38d90ced39db}' : '[Operating system shutdown]',
+-	'{9527e630-d0ae-497b-adce-e80ab0175caf}' : '[Time Synchronization]',
+-	'{57164f39-9115-4e78-ab55-382f3bd5422d}' : '[Heartbeat]',
+-	'{a9a0f4e7-5a45-4d96-b827-8a841e8c03e6}' : '[Data Exchange]',
+-	'{35fa2e29-ea23-4236-96ae-3a6ebacba440}' : '[Backup (volume checkpoint)]',
+-	'{34d14be3-dee4-41c8-9ae7-6b174977c192}' : '[Guest services]',
+-	'{525074dc-8985-46e2-8057-a307dc18a502}' : '[Dynamic Memory]',
+-	'{cfa8b69e-5b4a-4cc0-b98b-8ba1a1f3f95a}' : 'Synthetic mouse',
+-	'{f912ad6d-2b17-48ea-bd65-f927a61c7684}' : 'Synthetic keyboard',
+-	'{da0a7802-e377-4aac-8e77-0558eb1073f8}' : 'Synthetic framebuffer adapter',
+-	'{f8615163-df3e-46c5-913f-f2d2f965ed0e}' : 'Synthetic network adapter',
+-	'{32412632-86cb-44a2-9b5c-50d1417354f5}' : 'Synthetic IDE Controller',
+-	'{ba6163d9-04a1-4d29-b605-72e2ffb1dc7f}' : 'Synthetic SCSI Controller',
+-	'{2f9bcc4a-0069-4af3-b76b-6fd0be528cda}' : 'Synthetic fiber channel adapter',
+-	'{8c2eaf3d-32a7-4b09-ab99-bd1f1c86b501}' : 'Synthetic RDMA adapter',
+-	'{44c4f61d-4444-4400-9d52-802e27ede19f}' : 'PCI Express pass-through',
+-	'{276aacf4-ac15-426c-98dd-7521ad3f01fe}' : '[Reserved system device]',
+-	'{f8e65716-3cb3-4a06-9a60-1889c5cccab5}' : '[Reserved system device]',
+-	'{3375baf4-9e15-4b30-b765-67acb10d607b}' : '[Reserved system device]',
++	'{0e0b6031-5213-4934-818b-38d90ced39db}': '[Operating system shutdown]',
++	'{9527e630-d0ae-497b-adce-e80ab0175caf}': '[Time Synchronization]',
++	'{57164f39-9115-4e78-ab55-382f3bd5422d}': '[Heartbeat]',
++	'{a9a0f4e7-5a45-4d96-b827-8a841e8c03e6}': '[Data Exchange]',
++	'{35fa2e29-ea23-4236-96ae-3a6ebacba440}': '[Backup (volume checkpoint)]',
++	'{34d14be3-dee4-41c8-9ae7-6b174977c192}': '[Guest services]',
++	'{525074dc-8985-46e2-8057-a307dc18a502}': '[Dynamic Memory]',
++	'{cfa8b69e-5b4a-4cc0-b98b-8ba1a1f3f95a}': 'Synthetic mouse',
++	'{f912ad6d-2b17-48ea-bd65-f927a61c7684}': 'Synthetic keyboard',
++	'{da0a7802-e377-4aac-8e77-0558eb1073f8}': 'Synthetic framebuffer adapter',
++	'{f8615163-df3e-46c5-913f-f2d2f965ed0e}': 'Synthetic network adapter',
++	'{32412632-86cb-44a2-9b5c-50d1417354f5}': 'Synthetic IDE Controller',
++	'{ba6163d9-04a1-4d29-b605-72e2ffb1dc7f}': 'Synthetic SCSI Controller',
++	'{2f9bcc4a-0069-4af3-b76b-6fd0be528cda}': 'Synthetic fiber channel adapter',
++	'{8c2eaf3d-32a7-4b09-ab99-bd1f1c86b501}': 'Synthetic RDMA adapter',
++	'{44c4f61d-4444-4400-9d52-802e27ede19f}': 'PCI Express pass-through',
++	'{276aacf4-ac15-426c-98dd-7521ad3f01fe}': '[Reserved system device]',
++	'{f8e65716-3cb3-4a06-9a60-1889c5cccab5}': '[Reserved system device]',
++	'{3375baf4-9e15-4b30-b765-67acb10d607b}': '[Reserved system device]',
+ }
+ 
++
+ def get_vmbus_dev_attr(dev_name, attr):
+ 	try:
+ 		f = open('%s/%s/%s' % (vmbus_sys_path, dev_name, attr), 'r')
+@@ -52,6 +53,7 @@ def get_vmbus_dev_attr(dev_name, attr):
+ 
+ 	return lines
+ 
++
+ class VMBus_Dev:
+ 	pass
+ 
+@@ -66,12 +68,13 @@ for f in os.listdir(vmbus_sys_path):
+ 
+ 	chn_vp_mapping = get_vmbus_dev_attr(f, 'channel_vp_mapping')
+ 	chn_vp_mapping = [c.strip() for c in chn_vp_mapping]
+-	chn_vp_mapping = sorted(chn_vp_mapping,
+-		key = lambda c : int(c.split(':')[0]))
++	chn_vp_mapping = sorted(
++		chn_vp_mapping, key=lambda c: int(c.split(':')[0]))
+ 
+-	chn_vp_mapping = ['\tRel_ID=%s, target_cpu=%s' %
+-				(c.split(':')[0], c.split(':')[1])
+-					for c in chn_vp_mapping]
++	chn_vp_mapping = [
++		'\tRel_ID=%s, target_cpu=%s' %
++		(c.split(':')[0], c.split(':')[1]) for c in chn_vp_mapping
++	]
+ 	d = VMBus_Dev()
+ 	d.sysfs_path = '%s/%s' % (vmbus_sys_path, f)
+ 	d.vmbus_id = vmbus_id
+@@ -85,7 +88,7 @@ for f in os.listdir(vmbus_sys_path):
+ 	vmbus_dev_list.append(d)
+ 
+ 
+-vmbus_dev_list  = sorted(vmbus_dev_list, key = lambda d : int(d.vmbus_id))
++vmbus_dev_list = sorted(vmbus_dev_list, key=lambda d: int(d.vmbus_id))
+ 
+ format0 = '%2s: %s'
+ format1 = '%2s: Class_ID = %s - %s\n%s'
+@@ -95,9 +98,15 @@ for d in vmbus_dev_list:
+ 	if verbose == 0:
+ 		print(('VMBUS ID ' + format0) % (d.vmbus_id, d.dev_desc))
+ 	elif verbose == 1:
+-		print (('VMBUS ID ' + format1) %	\
+-			(d.vmbus_id, d.class_id, d.dev_desc, d.chn_vp_mapping))
++		print(
++			('VMBUS ID ' + format1) %
++			(d.vmbus_id, d.class_id, d.dev_desc, d.chn_vp_mapping)
++		)
+ 	else:
+-		print (('VMBUS ID ' + format2) % \
+-			(d.vmbus_id, d.class_id, d.dev_desc, \
+-			d.device_id, d.sysfs_path, d.chn_vp_mapping))
++		print(
++			('VMBUS ID ' + format2) %
++			(
++				d.vmbus_id, d.class_id, d.dev_desc,
++				d.device_id, d.sysfs_path, d.chn_vp_mapping
++			)
++		)
+-- 
+1.8.3.1
+

@@ -1,0 +1,10 @@
+--- hv_set_ifconfig.sh.orig	2018-06-11 15:57:50.000000000 +0200
++++ hv_set_ifconfig.sh	2018-09-03 09:34:57.470114502 +0200
+@@ -51,7 +51,6 @@
+ 
+ 
+ echo "IPV6INIT=yes" >> $1
+-echo "NM_CONTROLLED=no" >> $1
+ echo "PEERDNS=yes" >> $1
+ echo "ONBOOT=yes" >> $1
+ 

@@ -1,0 +1,36 @@
+From c04d9b584862ee913720632d7fdf83b79525a7d3 Mon Sep 17 00:00:00 2001
+From: Till Maas <timaas@redhat.com>
+Date: Tue, 14 Dec 2021 08:07:40 +0000
+Subject: [PATCH 2/2] Use filename for connection profile
+
+RH-Author: Mohamed Gamal Morsy <mmorsy@redhat.com>
+RH-MergeRequest: 2: hv_set_ifconfig.sh: Use nmcli commands
+RH-Commit: [2/2] 1b69f98b9c30ee6904475b78f2b93fabe2131074
+RH-Bugzilla: 2056566
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Vitaly Kuznetsov <vkuznets@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=2056566
+
+Signed-off-by: Till Maas <tmaas@redhat.com>
+Signed-off-by: Mohammed Gamal <mgamal@redhat.com>
+---
+ hv_set_ifconfig.sh | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/hv_set_ifconfig.sh b/hv_set_ifconfig.sh
+index 5a64efe..146829b 100644
+--- a/hv_set_ifconfig.sh
++++ b/hv_set_ifconfig.sh
+@@ -57,5 +57,6 @@ echo "ONBOOT=yes" >> $1
+ 
+ cp $1 /etc/sysconfig/network-scripts/
+ 
+-nmcli connection load "/etc/sysconfig/network-scripts/$1"
+-nmcli connection up filename "/etc/sysconfig/network-scripts/$1"
++filename="${1##*/}"
++nmcli connection load "/etc/sysconfig/network-scripts/${filename}"
++nmcli connection up filename "/etc/sysconfig/network-scripts/${filename}"
+-- 
+2.27.0
+

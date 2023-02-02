@@ -1,0 +1,59 @@
+From e956573e4fd5e489fd68a7d46f0aa715ee19084e Mon Sep 17 00:00:00 2001
+From: Mohammed Gamal <mgamal@redhat.com>
+Date: Wed, 25 Nov 2020 15:23:29 +0100
+Subject: [PATCH] tools: hv: change http to https in hv_kvp_daemon.c
+
+RH-Author: Mohammed Gamal Morsy (mmorsy)
+RH-MergeRequest: 1: RHEL 8.4.0 updates
+RH-Commit: [1/1] b7202f11 (mmorsy/hyperv-daemons)
+RH-Bugzilla: 1886104
+
+The patch has no functional change. Only changes the URL pointed to
+in one of the comments
+
+commit fa52a4b2d0ab416508538bb47a95167d4c94caac
+Author: Alexander A. Klimov <grandmaster@al2klimov.de>
+Date:   Sun Jul 5 23:44:57 2020 +0200
+
+    tools: hv: change http to https in hv_kvp_daemon.c
+
+    Rationale:
+    Reduces attack surface on kernel devs opening the links for MITM
+    as HTTPS traffic is much harder to manipulate.
+
+    Deterministic algorithm:
+    For each file:
+      If not .svg:
+        For each line:
+          If doesn't contain `\bxmlns\b`:
+            For each link, `\bhttp://[^# \t\r\n]*(?:\w|/)`:
+              If both the HTTP and HTTPS versions
+              return 200 OK and serve the same content:
+                Replace HTTP with HTTPS.
+
+    Signed-off-by: Alexander A. Klimov <grandmaster@al2klimov.de>
+    Link: https://lore.kernel.org/r/20200705214457.28433-1-grandmaster@al2klimov.de
+    [ wei: change subject line to be more specific ]
+    Signed-off-by: Wei Liu <wei.liu@kernel.org>
+
+Signed-off-by: Mohammed Gamal <mgamal@redhat.com>
+---
+ hv_kvp_daemon.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hv_kvp_daemon.c b/hv_kvp_daemon.c
+index ee9c1bb..1e6fd6c 100644
+--- a/hv_kvp_daemon.c
++++ b/hv_kvp_daemon.c
+@@ -437,7 +437,7 @@ void kvp_get_os_info(void)
+ 
+ 	/*
+ 	 * Parse the /etc/os-release file if present:
+-	 * http://www.freedesktop.org/software/systemd/man/os-release.html
++	 * https://www.freedesktop.org/software/systemd/man/os-release.html
+ 	 */
+ 	file = fopen("/etc/os-release", "r");
+ 	if (file != NULL) {
+-- 
+2.18.4
+
