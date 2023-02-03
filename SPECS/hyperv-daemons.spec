@@ -295,7 +295,7 @@ fi
 
 %changelog
 * Thu Feb  2 2023 Rich Alloway <ralloway@perforce .com> - 0-0.32.20180415git_ol002.el7
-- Added python3-devel as an explicit BuildRequires in order to populate "__python3" rpm macro so the sed command during the Tools %install phase works
+- Added python3-devel as an explicit BuildRequires in order to populate "__python3" rpm macro so the sed command during the Tools %_install phase works
 
 * Wed Jun 22 2022 Rich Alloway <ralloway@perforce .com> - 0-0.32.20180415git_ol001.el7
 - Built hyperv-daemons from EL8 for EL7 (aarch64) at the request of Microsoft
