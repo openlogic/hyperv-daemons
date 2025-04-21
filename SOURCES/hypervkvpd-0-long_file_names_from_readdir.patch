@@ -1,0 +1,45 @@
+diff --git a/hv_kvp_daemon.c b/hv_kvp_daemon.c
+old mode 100644
+new mode 100755
+index 408bb07..c106498
+--- a/hv_kvp_daemon.c
++++ b/hv_kvp_daemon.c
+@@ -44,6 +44,7 @@
+ #include <dirent.h>
+ #include <net/if.h>
+ #include <getopt.h>
++#include <limits.h>
+ 
+ /*
+  * KVP protocol: The user mode component first registers with the
+@@ -601,26 +602,22 @@ static char *kvp_get_if_name(char *guid)
+ 	DIR *dir;
+ 	struct dirent *entry;
+ 	FILE    *file;
+-	char    *p, *q, *x;
++	char    *p, *x;
+ 	char    *if_name = NULL;
+ 	char    buf[256];
+ 	char *kvp_net_dir = "/sys/class/net/";
+-	char dev_id[256];
++	char dev_id[PATH_MAX];
+ 
+ 	dir = opendir(kvp_net_dir);
+ 	if (dir == NULL)
+ 		return NULL;
+ 
+-	snprintf(dev_id, sizeof(dev_id), "%s", kvp_net_dir);
+-	q = dev_id + strlen(kvp_net_dir);
+-
+ 	while ((entry = readdir(dir)) != NULL) {
+ 		/*
+ 		 * Set the state for the next pass.
+ 		 */
+-		*q = '\0';
+-		strcat(dev_id, entry->d_name);
+-		strcat(dev_id, "/device/device_id");
++		snprintf(dev_id, sizeof(dev_id), "%s%s/device/device_id", kvp_net_dir,
++				entry->d_name);
+ 
+ 		file = fopen(dev_id, "r");
+ 		if (file == NULL)
